@@ -1,0 +1,29 @@
+name: Codzienny Monitor Cen
+
+on:
+  schedule:
+    # Uruchamia się codziennie o 10:00 czasu UTC (11:00/12:00 polskiego czasu)
+    - cron: '0 10 * * *'
+  workflow_dispatch: # Ten wpis pozwala na ręczne odpalenie testowe przyciskiem!
+
+jobs:
+  sprawdz_cene:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Pobranie plików repozytorium
+      uses: actions/checkout@v4
+
+    - name: Instalacja środowiska Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Instalacja wymaganych bibliotek
+      run: pip install -r requirements.txt
+
+    - name: Uruchomienie skryptu monitorującego
+      env:
+        EMAIL_NADAWCY: ${{ secrets.EMAIL_NADAWCY }}
+        HASLO_APLIKACJI: ${{ secrets.HASLO_APLIKACJI }}
+      run: python monitor.py
