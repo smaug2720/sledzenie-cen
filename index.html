@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prywatny Monitor Cen</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .card {
+            background-color: #1e293b;
+            padding: 32px;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+            width: 100%;
+            max-width: 480px;
+        }
+        h1 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            text-align: center;
+            color: #38bdf8;
+        }
+        .field {
+            margin-bottom: 18px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 0.9rem;
+            color: #cbd5e1;
+            font-weight: 500;
+        }
+        input {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #334155;
+            background-color: #0f172a;
+            color: #f8fafc;
+            font-size: 1rem;
+            box-sizing: border-box;
+        }
+        input:focus {
+            outline: none;
+            border-color: #38bdf8;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background-color: #0284c7;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0369a1;
+        }
+        button:disabled {
+            background-color: #475569;
+            cursor: not-allowed;
+        }
+        .status {
+            margin-top: 16px;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            display: none;
+            line-height: 1.4;
+        }
+        .status.success {
+            display: block;
+            background-color: rgba(34, 197, 94, 0.15);
+            border: 1px solid #22c55e;
+            color: #86efac;
+        }
+        .status.error {
+            display: block;
+            background-color: rgba(239, 68, 68, 0.15);
+            border: 1px solid #ef4444;
+            color: #fca5a5;
+        }
+        .status.info {
+            display: block;
+            background-color: rgba(56, 189, 248, 0.15);
+            border: 1px solid #38bdf8;
+            color: #bae6fd;
+        }
+        .hint {
+            font-size: 0.78rem;
+            color: #94a3b8;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Prywatny Monitor Cen</h1>
+
+        <div class="field">
+            <label for="urlInput">Link do produktu (Allegro lub Amazon)</label>
+            <input type="url" id="urlInput" placeholder="https://www.amazon.pl/dp/..." required>
+        </div>
+
+        <div class="field">
+            <label for="priceInput">Próg cenowy (zł)</label>
+            <input type="number" id="priceInput" step="0.01" placeholder="np. 137.02" required>
+        </div>
+
+        <div class="field">
+            <label for="tokenInput">Klucz dostępu GitHub (wpisujesz tylko raz)</label>
+            <input type="password" id="tokenInput" placeholder="github_pat_...">
+            <div class="hint">Zapisuje się wyłącznie w pamięci Twojej przeglądarki.</div>
+        </div>
+
+        <button id="saveBtn" onclick="zapiszUstawienia()">Zapisz i uruchom sprawdzanie</button>
+        <div id="statusBox" class="status"></div>
+    </div>
+
+    <script>
+        const OWNER = "smaug2720";
+        const REPO = "monitor-cen";
+        const FILE_PATH = "config.json";
+
+        function toBase64(str) {
+            const bytes = new TextEncoder().encode(str);
+            let binString = "";
+            bytes.forEach((b) => binString += String.fromCharCode(b));
+            return btoa(binString);
+        }
+
+        function fromBase64(b64) {
+            const binString = atob(b64.replace(/\n/g, ""));
+            const bytes = Uint8Array.from(binString, (m) => m.codePointAt(0));
+            return new TextDecoder().decode(bytes);
+        }
+
+        window.onload = async () => {
+            const zapisanyToken = localStorage.getItem("gh_monitor_token");
+            if (zapisanyToken) {
+                document.getElementById("tokenInput").value = zapisanyToken;
+                await wczytajAktualneDane(zapisanyToken);
+            }
+        };
+
+        function pokazStatus(tekst, typ) {
+            const box = document.getElementById("statusBox");
+            box.textContent = tekst;
+            box.className = "status " + typ;
+        }
+
+        async function wczytajAktualneDane(token) {
+            try {
+                const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`, {
+                    headers: {
+                        "Authorization": `Bearer ${token}`,
+                        "Accept": "application/vnd.github+json"
+                    }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const config = JSON.parse(fromBase64(data.content));
+                    document.getElementById("urlInput").value = config.url || "";
+                    document.getElementById("priceInput").value = config.docelowa_cena || "";
+                    pokazStatus("Wczytano aktualnie monitorowany produkt.", "info");
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function zapiszUstawienia() {
+            const url = document.getElementById("urlInput").value.trim();
+            const cena = parseFloat(document.getElementById("priceInput").value.replace(",", "."));
+            const token = document.getElementById("tokenInput").value.trim();
+            const btn = document.getElementById("saveBtn");
+
+            if (!url || isNaN(cena) || !token) {
+                pokazStatus("Uzupełnij wszystkie trzy pola przed zapisaniem.", "error");
+                return;
+            }
+
+            localStorage.setItem("gh_monitor_token", token);
+            btn.disabled = true;
+            pokazStatus("Zapisywanie zmian na GitHubie...", "info");
+
+            const headers = {
+                "Authorization": `Bearer ${token}`,
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json"
+            };
+
+            try {
+                const repoRes = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}`, { headers });
+                if (!repoRes.ok) throw new Error("Nieprawidłowy klucz dostępu lub brak uprawnień.");
+                const repoData = await repoRes.json();
+                const branch = repoData.default_branch;
+
+                let sha = null;
+                const fileRes = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`, { headers });
+                if (fileRes.ok) {
+                    const fileData = await fileRes.json();
+                    sha = fileData.sha;
+                }
+
+                const nowyConfig = JSON.stringify({ url: url, docelowa_cena: cena }, null, 2);
+                const putBody = {
+                    message: "Aktualizacja produktu przez stronę WWW",
+                    content: toBase64(nowyConfig),
+                    branch: branch
+                };
+                if (sha) putBody.sha = sha;
+
+                const putRes = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`, {
+                    method: "PUT",
+                    headers: headers,
+                    body: JSON.stringify(putBody)
+                });
+
+                if (!putRes.ok) throw new Error("Nie udało się zapisać pliku config.json. Sprawdź uprawnienia klucza.");
+
+                await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/main.yml/dispatches`, {
+                    method: "POST",
+                    headers: headers,
+                    body: JSON.stringify({ ref: branch })
+                });
+
+                pokazStatus("Zapisano! Nowy produkt będzie sprawdzany codziennie, a testowe sprawdzenie właśnie ruszyło.", "success");
+            } catch (err) {
+                pokazStatus("Błąd: " + err.message, "error");
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
