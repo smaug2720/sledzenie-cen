@@ -57,6 +57,13 @@
         .field {
             margin-bottom: 18px;
         }
+        .row {
+            display: flex;
+            gap: 12px;
+        }
+        .row .field {
+            flex: 1;
+        }
         label {
             display: block;
             margin-bottom: 6px;
@@ -73,6 +80,7 @@
             color: #f8fafc;
             font-size: 1rem;
             box-sizing: border-box;
+            color-scheme: dark;
         }
         input:focus {
             outline: none;
@@ -154,9 +162,15 @@
             <input type="url" id="urlInput" placeholder="https://www.amazon.pl/dp/..." required>
         </div>
 
-        <div class="field">
-            <label for="priceInput">Próg cenowy (zł)</label>
-            <input type="number" id="priceInput" step="0.01" placeholder="np. 137.02" required>
+        <div class="row">
+            <div class="field">
+                <label for="priceInput">Próg cenowy (zł)</label>
+                <input type="number" id="priceInput" step="0.01" placeholder="np. 137.02" required>
+            </div>
+            <div class="field">
+                <label for="timeInput">Godzina sprawdzania</label>
+                <input type="time" id="timeInput" value="11:00" required>
+            </div>
         </div>
 
         <div class="field">
@@ -174,6 +188,7 @@
         const OWNER = "smaug2720";
         const REPO = "sledzenie-cen";
         const FILE_PATH = "config.json";
+        const WORKFLOW_PATH = ".github/workflows/main.yml";
 
         function toBase64(str) {
             const bytes = new TextEncoder().encode(str);
@@ -197,6 +212,13 @@
                 badge.textContent = "● Monitorowanie zatrzymane";
                 badge.className = "badge stopped";
             }
+        }
+
+        function lokalnyCzasNaCronUTC(godzinaStr) {
+            const [localHour, localMin] = godzinaStr.split(":").map(Number);
+            const data = new Date();
+            data.setHours(localHour, localMin, 0, 0);
+            return `${data.getUTCMinutes()} ${data.getUTCHours()} * * *`;
         }
 
         window.onload = async () => {
@@ -228,6 +250,7 @@
                     const config = JSON.parse(fromBase64(data.content));
                     document.getElementById("urlInput").value = config.url || "";
                     document.getElementById("priceInput").value = config.docelowa_cena || "";
+                    document.getElementById("timeInput").value = config.godzina || "11:00";
 
                     const czyAktywny = config.aktywny !== false;
                     ustawEtykieteStanu(czyAktywny);
@@ -247,6 +270,7 @@
             const url = document.getElementById("urlInput").value.trim();
             const cenaRaw = parseFloat(document.getElementById("priceInput").value.replace(",", "."));
             const cena = isNaN(cenaRaw) ? 0 : cenaRaw;
+            const godzina = document.getElementById("timeInput").value || "11:00";
             const token = document.getElementById("tokenInput").value.trim();
             const saveBtn = document.getElementById("saveBtn");
             const stopBtn = document.getElementById("stopBtn");
@@ -256,15 +280,15 @@
                 return;
             }
 
-            if (czyAktywowac && (!url || isNaN(cenaRaw))) {
-                pokazStatus("Uzupełnij link do produktu oraz próg cenowy.", "error");
+            if (czyAktywowac && (!url || isNaN(cenaRaw) || !godzina)) {
+                pokazStatus("Uzupełnij link do produktu, próg cenowy oraz godzinę.", "error");
                 return;
             }
 
             localStorage.setItem("gh_monitor_token", token);
             saveBtn.disabled = true;
             stopBtn.disabled = true;
-            pokazStatus("Zapisywanie ustawień na GitHubie...", "info");
+            pokazStatus("Zapisywanie ustawień i harmonogramu na GitHubie...", "info");
 
             const headers = {
                 "Authorization": `Bearer ${token}`,
@@ -278,6 +302,7 @@
                 const repoData = await repoRes.json();
                 const branch = repoData.default_branch;
 
+                // 1. Zapis pliku config.json
                 let sha = null;
                 const fileRes = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`, { headers });
                 if (fileRes.ok) {
@@ -288,11 +313,12 @@
                 const nowyConfig = JSON.stringify({
                     url: url,
                     docelowa_cena: cena,
+                    godzina: godzina,
                     aktywny: czyAktywowac
                 }, null, 2);
 
                 const putBody = {
-                    message: czyAktywowac ? "Uruchomienie monitorowania przez stronę WWW" : "Zatrzymanie monitorowania przez stronę WWW",
+                    message: czyAktywowac ? "Aktualizacja produktu i godziny przez stronę WWW" : "Zatrzymanie monitorowania przez stronę WWW",
                     content: toBase64(nowyConfig),
                     branch: branch
                 };
@@ -306,16 +332,42 @@
 
                 if (!putRes.ok) throw new Error("Nie udało się zapisać pliku config.json.");
 
-                ustawEtykieteStanu(czyAktywowac);
-
+                // 2. Aktualizacja godziny w harmonogramie main.yml i natychmiastowe sprawdzenie
                 if (czyAktywowac) {
+                    const wfRes = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${WORKFLOW_PATH}`, { headers });
+                    if (wfRes.ok) {
+                        const wfData = await wfRes.json();
+                        const staryYaml = fromBase64(wfData.content);
+                        const nowyCron = lokalnyCzasNaCronUTC(godzina);
+                        const nowyYaml = staryYaml.replace(/cron:\s*'[^']*'/, `cron: '${nowyCron}'`);
+
+                        if (nowyYaml !== staryYaml) {
+                            const wfPutRes = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${WORKFLOW_PATH}`, {
+                                method: "PUT",
+                                headers: headers,
+                                body: JSON.stringify({
+                                    message: `Zmiana godziny sprawdzania na ${godzina}`,
+                                    content: toBase64(nowyYaml),
+                                    sha: wfData.sha,
+                                    branch: branch
+                                })
+                            });
+                            if (!wfPutRes.ok) {
+                                throw new Error("Zapisano produkt, ale brak uprawnienia 'Workflows: Read and write' w tokenie do zmiany godziny.");
+                            }
+                        }
+                    }
+
                     await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/main.yml/dispatches`, {
                         method: "POST",
                         headers: headers,
                         body: JSON.stringify({ ref: branch })
                     });
-                    pokazStatus("Zapisano! Produkt będzie sprawdzany codziennie, a testowe sprawdzenie właśnie ruszyło.", "success");
+
+                    ustawEtykieteStanu(true);
+                    pokazStatus(`Zapisano! Natychmiastowe sprawdzenie właśnie ruszyło, a kolejne będą odbywać się codziennie o ${godzina}.`, "success");
                 } else {
+                    ustawEtykieteStanu(false);
                     pokazStatus("Zatrzymano monitorowanie. Skrypt nie będzie już sprawdzał ceny tego produktu.", "success");
                 }
             } catch (err) {
