@@ -136,6 +136,10 @@ def main():
     with open("config.json", "r", encoding="utf-8") as plik:
         konfiguracja = json.load(plik)
 
+    if not konfiguracja.get("aktywny", True):
+        print("Monitorowanie jest obecnie zatrzymane. Pomijam sprawdzanie ceny.")
+        return
+
     url = konfiguracja["url"]
     docelowa_cena = float(konfiguracja["docelowa_cena"])
 
