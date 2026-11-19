@@ -21,9 +21,6 @@ jobs:
     - name: Instalacja wymaganych bibliotek
       run: pip install -r requirements.txt
 
-    - name: Instalacja przeglądarki dla Allegro
-      run: playwright install --with-deps chromium
-
     - name: Uruchomienie skryptu monitorującego
       env:
         EMAIL_NADAWCY: ${{ secrets.EMAIL_NADAWCY }}
